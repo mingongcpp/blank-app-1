@@ -1,151 +1,259 @@
 import streamlit as st
 import pandas as pd
-import math
-from pathlib import Path
+import re
+import json
 
-# Set the title and favicon that appear in the Browser's tab bar.
+# Set page config
 st.set_page_config(
-    page_title='GDP dashboard',
-    page_icon=':earth_americas:', # This is an emoji shortcode. Could be a URL too.
+    page_title="Text Classification Tool",
+    page_icon="📝",
+    layout="wide"
 )
 
-# -----------------------------------------------------------------------------
-# Declare some useful functions.
+# Initialize session state for dictionaries
+if 'dictionaries' not in st.session_state:
+    st.session_state.dictionaries = {
+        'promotional': ['sale', 'discount', 'offer', 'deal', 'limited', 'order', 'buy'],
+        'descriptive': ['perfect', 'classic', 'gorgeous', 'excellence', 'quality'],
+        'personal': ['my', 'me', 'i', 'smile', 'goal', 'today'],
+        'action': ['get', 'order', 'contact', 'touch', 'reach']
+    }
 
-@st.cache_data
-def get_gdp_data():
-    """Grab GDP data from a CSV file.
+def classify_text(text, dictionaries):
+    """Classify text based on dictionary keywords."""
+    if pd.isna(text):
+        return {}
+    
+    text_lower = text.lower()
+    results = {}
+    
+    for category, keywords in dictionaries.items():
+        matches = [kw for kw in keywords if re.search(r'\b' + re.escape(kw) + r'\b', text_lower)]
+        if matches:
+            results[category] = matches
+    
+    return results
 
-    This uses caching to avoid having to read the file every time. If we were
-    reading from an HTTP endpoint instead of a file, it's a good idea to set
-    a maximum age to the cache with the TTL argument: @st.cache_data(ttl='1d')
-    """
-
-    # Instead of a CSV on disk, you could read from an HTTP endpoint here too.
-    DATA_FILENAME = Path(__file__).parent/'data/gdp_data.csv'
-    raw_gdp_df = pd.read_csv(DATA_FILENAME)
-
-    MIN_YEAR = 1960
-    MAX_YEAR = 2022
-
-    # The data above has columns like:
-    # - Country Name
-    # - Country Code
-    # - [Stuff I don't care about]
-    # - GDP for 1960
-    # - GDP for 1961
-    # - GDP for 1962
-    # - ...
-    # - GDP for 2022
-    #
-    # ...but I want this instead:
-    # - Country Name
-    # - Country Code
-    # - Year
-    # - GDP
-    #
-    # So let's pivot all those year-columns into two: Year and GDP
-    gdp_df = raw_gdp_df.melt(
-        ['Country Code'],
-        [str(x) for x in range(MIN_YEAR, MAX_YEAR + 1)],
-        'Year',
-        'GDP',
-    )
-
-    # Convert years from string to integers
-    gdp_df['Year'] = pd.to_numeric(gdp_df['Year'])
-
-    return gdp_df
-
-gdp_df = get_gdp_data()
-
-# -----------------------------------------------------------------------------
-# Draw the actual page
-
-# Set the title that appears at the top of the page.
-'''
-# :earth_americas: GDP dashboard
-
-Browse GDP data from the [World Bank Open Data](https://data.worldbank.org/) website. As you'll
-notice, the data only goes to 2022 right now, and datapoints for certain years are often missing.
-But it's otherwise a great (and did I mention _free_?) source of data.
-'''
-
-# Add some spacing
-''
-''
-
-min_value = gdp_df['Year'].min()
-max_value = gdp_df['Year'].max()
-
-from_year, to_year = st.slider(
-    'Which years are you interested in?',
-    min_value=min_value,
-    max_value=max_value,
-    value=[min_value, max_value])
-
-countries = gdp_df['Country Code'].unique()
-
-if not len(countries):
-    st.warning("Select at least one country")
-
-selected_countries = st.multiselect(
-    'Which countries would you like to view?',
-    countries,
-    ['DEU', 'FRA', 'GBR', 'BRA', 'MEX', 'JPN'])
-
-''
-''
-''
-
-# Filter the data
-filtered_gdp_df = gdp_df[
-    (gdp_df['Country Code'].isin(selected_countries))
-    & (gdp_df['Year'] <= to_year)
-    & (from_year <= gdp_df['Year'])
-]
-
-st.header('GDP over time', divider='gray')
-
-''
-
-st.line_chart(
-    filtered_gdp_df,
-    x='Year',
-    y='GDP',
-    color='Country Code',
-)
-
-''
-''
-
-
-first_year = gdp_df[gdp_df['Year'] == from_year]
-last_year = gdp_df[gdp_df['Year'] == to_year]
-
-st.header(f'GDP in {to_year}', divider='gray')
-
-''
-
-cols = st.columns(4)
-
-for i, country in enumerate(selected_countries):
-    col = cols[i % len(cols)]
-
-    with col:
-        first_gdp = first_year[first_year['Country Code'] == country]['GDP'].iat[0] / 1000000000
-        last_gdp = last_year[last_year['Country Code'] == country]['GDP'].iat[0] / 1000000000
-
-        if math.isnan(first_gdp):
-            growth = 'n/a'
-            delta_color = 'off'
-        else:
-            growth = f'{last_gdp / first_gdp:,.2f}x'
-            delta_color = 'normal'
-
-        st.metric(
-            label=f'{country} GDP',
-            value=f'{last_gdp:,.0f}B',
-            delta=growth,
-            delta_color=delta_color
+def main():
+    st.title("📝 Text Classification Tool")
+    st.markdown("Upload your CSV file and customize classification dictionaries to categorize text data.")
+    
+    # Sidebar for dictionary management
+    with st.sidebar:
+        st.header("⚙️ Dictionary Settings")
+        
+        # Option to reset to defaults
+        if st.button("Reset to Defaults"):
+            st.session_state.dictionaries = {
+                'promotional': ['sale', 'discount', 'offer', 'deal', 'limited', 'order', 'buy'],
+                'descriptive': ['perfect', 'classic', 'gorgeous', 'excellence', 'quality'],
+                'personal': ['my', 'me', 'i', 'smile', 'goal', 'today'],
+                'action': ['get', 'order', 'contact', 'touch', 'reach']
+            }
+            st.rerun()
+        
+        st.markdown("---")
+        
+        # Edit existing categories
+        st.subheader("Edit Categories")
+        categories_to_delete = []
+        
+        for category in list(st.session_state.dictionaries.keys()):
+            with st.expander(f"📁 {category.title()}", expanded=False):
+                # Display current keywords
+                keywords_text = ", ".join(st.session_state.dictionaries[category])
+                new_keywords = st.text_area(
+                    "Keywords (comma-separated)",
+                    value=keywords_text,
+                    key=f"edit_{category}",
+                    height=100
+                )
+                
+                col1, col2 = st.columns(2)
+                with col1:
+                    if st.button("Update", key=f"update_{category}"):
+                        # Parse and update keywords
+                        updated_keywords = [kw.strip() for kw in new_keywords.split(',') if kw.strip()]
+                        st.session_state.dictionaries[category] = updated_keywords
+                        st.success(f"Updated {category}!")
+                        st.rerun()
+                
+                with col2:
+                    if st.button("Delete", key=f"delete_{category}"):
+                        categories_to_delete.append(category)
+        
+        # Delete marked categories
+        for cat in categories_to_delete:
+            del st.session_state.dictionaries[cat]
+            st.rerun()
+        
+        st.markdown("---")
+        
+        # Add new category
+        st.subheader("Add New Category")
+        new_category_name = st.text_input("Category Name")
+        new_category_keywords = st.text_area("Keywords (comma-separated)")
+        
+        if st.button("Add Category"):
+            if new_category_name and new_category_keywords:
+                keywords = [kw.strip() for kw in new_category_keywords.split(',') if kw.strip()]
+                st.session_state.dictionaries[new_category_name.lower()] = keywords
+                st.success(f"Added category: {new_category_name}")
+                st.rerun()
+            else:
+                st.error("Please provide both category name and keywords")
+    
+    # Main content area
+    col1, col2 = st.columns([2, 1])
+    
+    with col1:
+        st.header("📤 Upload Data")
+        uploaded_file = st.file_uploader(
+            "Choose a CSV file",
+            type=['csv'],
+            help="Upload a CSV file with a column containing text to classify"
         )
+    
+    with col2:
+        st.header("📊 Current Dictionary")
+        st.json(st.session_state.dictionaries)
+    
+    if uploaded_file is not None:
+        try:
+            # Read the uploaded file
+            df = pd.read_csv(uploaded_file)
+            
+            st.success(f"✅ File uploaded successfully! Found {len(df)} rows.")
+            
+            # Select the text column to classify
+            st.subheader("Select Text Column")
+            text_columns = df.columns.tolist()
+            selected_column = st.selectbox(
+                "Choose the column containing text to classify:",
+                text_columns
+            )
+            
+            if st.button("🚀 Classify Text", type="primary"):
+                with st.spinner("Classifying text..."):
+                    # Apply classification
+                    df['classification'] = df[selected_column].apply(
+                        lambda x: classify_text(x, st.session_state.dictionaries)
+                    )
+                    df['categories'] = df['classification'].apply(
+                        lambda x: list(x.keys()) if x else []
+                    )
+                    df['matched_keywords'] = df['classification'].apply(
+                        lambda x: {k: v for k, v in x.items()} if x else {}
+                    )
+                
+                st.success("✅ Classification complete!")
+                
+                # Display results
+                st.subheader("Classification Results")
+                
+                # Summary statistics
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("Total Rows", len(df))
+                with col2:
+                    classified_count = df['categories'].apply(len).sum()
+                    st.metric("Total Classifications", classified_count)
+                with col3:
+                    rows_with_matches = (df['categories'].apply(len) > 0).sum()
+                    st.metric("Rows with Matches", rows_with_matches)
+                
+                # Category distribution
+                st.subheader("📊 Category Distribution")
+                category_counts = {}
+                for categories in df['categories']:
+                    for cat in categories:
+                        category_counts[cat] = category_counts.get(cat, 0) + 1
+                
+                if category_counts:
+                    category_df = pd.DataFrame(
+                        list(category_counts.items()),
+                        columns=['Category', 'Count']
+                    ).sort_values('Count', ascending=False)
+                    st.bar_chart(category_df.set_index('Category'))
+                else:
+                    st.info("No matches found in the dataset.")
+                
+                # Display detailed results
+                st.subheader("Detailed Results")
+                
+                # Filter options
+                filter_col1, filter_col2 = st.columns(2)
+                with filter_col1:
+                    show_only_matches = st.checkbox("Show only rows with matches", value=False)
+                with filter_col2:
+                    category_filter = st.multiselect(
+                        "Filter by category:",
+                        options=list(st.session_state.dictionaries.keys())
+                    )
+                
+                # Apply filters
+                display_df = df.copy()
+                if show_only_matches:
+                    display_df = display_df[display_df['categories'].apply(len) > 0]
+                
+                if category_filter:
+                    display_df = display_df[
+                        display_df['categories'].apply(
+                            lambda x: any(cat in x for cat in category_filter)
+                        )
+                    ]
+                
+                # Show results table
+                st.dataframe(
+                    display_df[[selected_column, 'categories', 'matched_keywords']],
+                    use_container_width=True,
+                    height=400
+                )
+                
+                # Download results
+                st.subheader("💾 Download Results")
+                
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    # CSV download
+                    csv = df.to_csv(index=False)
+                    st.download_button(
+                        label="📥 Download as CSV",
+                        data=csv,
+                        file_name="classified_data.csv",
+                        mime="text/csv"
+                    )
+                
+                with col2:
+                    # JSON download (for matched keywords)
+                    json_data = df.to_json(orient='records', indent=2)
+                    st.download_button(
+                        label="📥 Download as JSON",
+                        data=json_data,
+                        file_name="classified_data.json",
+                        mime="application/json"
+                    )
+        
+        except Exception as e:
+            st.error(f"❌ Error processing file: {str(e)}")
+            st.info("Please ensure your CSV file is properly formatted.")
+    
+    else:
+        st.info("👆 Please upload a CSV file to get started.")
+        
+        # Show example format
+        with st.expander("📋 Example CSV Format"):
+            example_df = pd.DataFrame({
+                'ID': [1, 2, 3],
+                'Statement': [
+                    'Get this amazing discount offer today!',
+                    'This is a perfect and classic design',
+                    'Contact me to reach your goals'
+                ]
+            })
+            st.dataframe(example_df)
+            st.caption("Your CSV should have at least one column with text to classify.")
+
+if __name__ == "__main__":
+    main()
