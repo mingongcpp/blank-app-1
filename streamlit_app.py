@@ -1,259 +1,250 @@
-import streamlit as st
-import pandas as pd
-import re
 import json
+import io
 
-# Set page config
-st.set_page_config(
-    page_title="Text Classification Tool",
-    page_icon="📝",
-    layout="wide"
-)
+import numpy as np
+import pandas as pd
+import streamlit as st
 
-# Initialize session state for dictionaries
-if 'dictionaries' not in st.session_state:
-    st.session_state.dictionaries = {
-        'promotional': ['sale', 'discount', 'offer', 'deal', 'limited', 'order', 'buy'],
-        'descriptive': ['perfect', 'classic', 'gorgeous', 'excellence', 'quality'],
-        'personal': ['my', 'me', 'i', 'smile', 'goal', 'today'],
-        'action': ['get', 'order', 'contact', 'touch', 'reach']
-    }
+# ========== 1. Default settings ==========
 
-def classify_text(text, dictionaries):
-    """Classify text based on dictionary keywords."""
-    if pd.isna(text):
-        return {}
-    
+# Default name of the text column to classify.
+DEFAULT_TEXT_COL = "Statement"
+
+# Default dictionary of tactics -> keywords.
+DEFAULT_TACTIC_DICTIONARY = {
+    "scarcity": [
+        "last chance", "last week", "limited time", "only a few",
+        "before they’re gone", "while stocks last"
+    ],
+    "urgency": [
+        "today only", "now", "hurry", "right away",
+        "don’t wait", "immediately"
+    ],
+    "social_proof": [
+        "popular", "bestseller", "customers love", "everyone",
+        "most people", "thousands of"
+    ],
+    "discount": [
+        "discount", "sale", "off", "% off", "save",
+        "special offer", "deal"
+    ],
+    # You can add more labels here.
+}
+
+
+# ========== 2. Classifier function ==========
+
+def classify_statement(text, dictionary, return_multiple=False):
+    """
+    text: string to classify
+    dictionary: dict[label] -> list of keywords
+    return_multiple: if True, return all matching labels as list.
+                     if False, return the first match based on dict order.
+    """
+    if not isinstance(text, str):
+        return np.nan
+
     text_lower = text.lower()
-    results = {}
-    
-    for category, keywords in dictionaries.items():
-        matches = [kw for kw in keywords if re.search(r'\b' + re.escape(kw) + r'\b', text_lower)]
-        if matches:
-            results[category] = matches
-    
-    return results
+    matched_labels = []
+
+    # Loop in dictionary order -> can be used as priority order
+    for label, keywords in dictionary.items():
+        for kw in keywords:
+            if kw.lower() in text_lower:
+                matched_labels.append(label)
+                break  # stop after first keyword match for this label
+
+    if not matched_labels:
+        return np.nan
+
+    if return_multiple:
+        return ";".join(matched_labels)  # or return matched_labels as a list
+
+    # Single-label: use first matched label (priority by dict order)
+    return matched_labels[0]
+
+
+# ========== 3. Streamlit app ==========
 
 def main():
-    st.title("📝 Text Classification Tool")
-    st.markdown("Upload your CSV file and customize classification dictionaries to categorize text data.")
-    
-    # Sidebar for dictionary management
-    with st.sidebar:
-        st.header("⚙️ Dictionary Settings")
-        
-        # Option to reset to defaults
-        if st.button("Reset to Defaults"):
-            st.session_state.dictionaries = {
-                'promotional': ['sale', 'discount', 'offer', 'deal', 'limited', 'order', 'buy'],
-                'descriptive': ['perfect', 'classic', 'gorgeous', 'excellence', 'quality'],
-                'personal': ['my', 'me', 'i', 'smile', 'goal', 'today'],
-                'action': ['get', 'order', 'contact', 'touch', 'reach']
-            }
-            st.rerun()
-        
-        st.markdown("---")
-        
-        # Edit existing categories
-        st.subheader("Edit Categories")
-        categories_to_delete = []
-        
-        for category in list(st.session_state.dictionaries.keys()):
-            with st.expander(f"📁 {category.title()}", expanded=False):
-                # Display current keywords
-                keywords_text = ", ".join(st.session_state.dictionaries[category])
-                new_keywords = st.text_area(
-                    "Keywords (comma-separated)",
-                    value=keywords_text,
-                    key=f"edit_{category}",
-                    height=100
-                )
-                
-                col1, col2 = st.columns(2)
-                with col1:
-                    if st.button("Update", key=f"update_{category}"):
-                        # Parse and update keywords
-                        updated_keywords = [kw.strip() for kw in new_keywords.split(',') if kw.strip()]
-                        st.session_state.dictionaries[category] = updated_keywords
-                        st.success(f"Updated {category}!")
-                        st.rerun()
-                
-                with col2:
-                    if st.button("Delete", key=f"delete_{category}"):
-                        categories_to_delete.append(category)
-        
-        # Delete marked categories
-        for cat in categories_to_delete:
-            del st.session_state.dictionaries[cat]
-            st.rerun()
-        
-        st.markdown("---")
-        
-        # Add new category
-        st.subheader("Add New Category")
-        new_category_name = st.text_input("Category Name")
-        new_category_keywords = st.text_area("Keywords (comma-separated)")
-        
-        if st.button("Add Category"):
-            if new_category_name and new_category_keywords:
-                keywords = [kw.strip() for kw in new_category_keywords.split(',') if kw.strip()]
-                st.session_state.dictionaries[new_category_name.lower()] = keywords
-                st.success(f"Added category: {new_category_name}")
-                st.rerun()
-            else:
-                st.error("Please provide both category name and keywords")
-    
-    # Main content area
-    col1, col2 = st.columns([2, 1])
-    
-    with col1:
-        st.header("📤 Upload Data")
-        uploaded_file = st.file_uploader(
-            "Choose a CSV file",
-            type=['csv'],
-            help="Upload a CSV file with a column containing text to classify"
-        )
-    
-    with col2:
-        st.header("📊 Current Dictionary")
-        st.json(st.session_state.dictionaries)
-    
+    st.set_page_config(page_title="Tactic Dictionary Classifier", layout="wide")
+
+    st.title("🔍 Tactic Dictionary Text Classifier")
+    st.write(
+        "Upload a CSV file, choose the text column, edit the tactic–keyword "
+        "dictionary, and classify each row using simple keyword matching."
+    )
+
+    # ---------- 3.1 File upload ----------
+    st.header("1. Upload your dataset")
+    uploaded_file = st.file_uploader("Upload a CSV file", type=["csv"])
+
     if uploaded_file is not None:
         try:
-            # Read the uploaded file
             df = pd.read_csv(uploaded_file)
-            
-            st.success(f"✅ File uploaded successfully! Found {len(df)} rows.")
-            
-            # Select the text column to classify
-            st.subheader("Select Text Column")
-            text_columns = df.columns.tolist()
-            selected_column = st.selectbox(
-                "Choose the column containing text to classify:",
-                text_columns
-            )
-            
-            if st.button("🚀 Classify Text", type="primary"):
-                with st.spinner("Classifying text..."):
-                    # Apply classification
-                    df['classification'] = df[selected_column].apply(
-                        lambda x: classify_text(x, st.session_state.dictionaries)
-                    )
-                    df['categories'] = df['classification'].apply(
-                        lambda x: list(x.keys()) if x else []
-                    )
-                    df['matched_keywords'] = df['classification'].apply(
-                        lambda x: {k: v for k, v in x.items()} if x else {}
-                    )
-                
-                st.success("✅ Classification complete!")
-                
-                # Display results
-                st.subheader("Classification Results")
-                
-                # Summary statistics
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    st.metric("Total Rows", len(df))
-                with col2:
-                    classified_count = df['categories'].apply(len).sum()
-                    st.metric("Total Classifications", classified_count)
-                with col3:
-                    rows_with_matches = (df['categories'].apply(len) > 0).sum()
-                    st.metric("Rows with Matches", rows_with_matches)
-                
-                # Category distribution
-                st.subheader("📊 Category Distribution")
-                category_counts = {}
-                for categories in df['categories']:
-                    for cat in categories:
-                        category_counts[cat] = category_counts.get(cat, 0) + 1
-                
-                if category_counts:
-                    category_df = pd.DataFrame(
-                        list(category_counts.items()),
-                        columns=['Category', 'Count']
-                    ).sort_values('Count', ascending=False)
-                    st.bar_chart(category_df.set_index('Category'))
-                else:
-                    st.info("No matches found in the dataset.")
-                
-                # Display detailed results
-                st.subheader("Detailed Results")
-                
-                # Filter options
-                filter_col1, filter_col2 = st.columns(2)
-                with filter_col1:
-                    show_only_matches = st.checkbox("Show only rows with matches", value=False)
-                with filter_col2:
-                    category_filter = st.multiselect(
-                        "Filter by category:",
-                        options=list(st.session_state.dictionaries.keys())
-                    )
-                
-                # Apply filters
-                display_df = df.copy()
-                if show_only_matches:
-                    display_df = display_df[display_df['categories'].apply(len) > 0]
-                
-                if category_filter:
-                    display_df = display_df[
-                        display_df['categories'].apply(
-                            lambda x: any(cat in x for cat in category_filter)
-                        )
-                    ]
-                
-                # Show results table
-                st.dataframe(
-                    display_df[[selected_column, 'categories', 'matched_keywords']],
-                    use_container_width=True,
-                    height=400
-                )
-                
-                # Download results
-                st.subheader("💾 Download Results")
-                
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    # CSV download
-                    csv = df.to_csv(index=False)
-                    st.download_button(
-                        label="📥 Download as CSV",
-                        data=csv,
-                        file_name="classified_data.csv",
-                        mime="text/csv"
-                    )
-                
-                with col2:
-                    # JSON download (for matched keywords)
-                    json_data = df.to_json(orient='records', indent=2)
-                    st.download_button(
-                        label="📥 Download as JSON",
-                        data=json_data,
-                        file_name="classified_data.json",
-                        mime="application/json"
-                    )
-        
         except Exception as e:
-            st.error(f"❌ Error processing file: {str(e)}")
-            st.info("Please ensure your CSV file is properly formatted.")
-    
+            st.error(f"Error reading CSV: {e}")
+            return
+
+        st.success("File uploaded successfully!")
+        st.write("Preview of your data:")
+        st.dataframe(df.head())
     else:
-        st.info("👆 Please upload a CSV file to get started.")
-        
-        # Show example format
-        with st.expander("📋 Example CSV Format"):
-            example_df = pd.DataFrame({
-                'ID': [1, 2, 3],
-                'Statement': [
-                    'Get this amazing discount offer today!',
-                    'This is a perfect and classic design',
-                    'Contact me to reach your goals'
-                ]
-            })
-            st.dataframe(example_df)
-            st.caption("Your CSV should have at least one column with text to classify.")
+        st.info("👆 Upload a CSV file to get started.")
+        df = None
+
+    # ---------- 3.2 Choose text column ----------
+    text_col = DEFAULT_TEXT_COL
+    if df is not None:
+        st.header("2. Choose the text column")
+        cols = list(df.columns)
+
+        if DEFAULT_TEXT_COL in cols:
+            default_index = cols.index(DEFAULT_TEXT_COL)
+        else:
+            default_index = 0
+
+        text_col = st.selectbox(
+            "Select the column that contains the text to classify:",
+            options=cols,
+            index=default_index,
+        )
+
+    # ---------- 3.3 Dictionary editor ----------
+    st.header("3. Edit the tactic dictionary")
+
+    st.markdown(
+        "The dictionary is a JSON object where:\n\n"
+        "- **Keys** are tactic/label names (strings)\n"
+        "- **Values** are lists of keywords/phrases (strings)\n\n"
+        "You can edit the JSON below to add/remove tactics or keywords."
+    )
+
+    default_dict_str = json.dumps(DEFAULT_TACTIC_DICTIONARY, indent=2, ensure_ascii=False)
+    dict_text = st.text_area(
+        "Tactic dictionary (JSON format)",
+        value=default_dict_str,
+        height=250,
+    )
+
+    # Try to parse user-edited dictionary
+    user_dictionary = DEFAULT_TACTIC_DICTIONARY
+    dict_valid = True
+    error_msg = ""
+
+    try:
+        parsed = json.loads(dict_text)
+
+        # Basic validation: must be dict[str, list[str]]
+        if not isinstance(parsed, dict):
+            raise ValueError("The root JSON object must be a dictionary.")
+
+        for k, v in parsed.items():
+            if not isinstance(k, str):
+                raise ValueError("All keys must be strings.")
+            if not isinstance(v, list):
+                raise ValueError(f"Value for key '{k}' must be a list.")
+            for item in v:
+                if not isinstance(item, str):
+                    raise ValueError(
+                        f"All items in list for key '{k}' must be strings."
+                    )
+
+        user_dictionary = parsed
+
+    except Exception as e:
+        dict_valid = False
+        error_msg = str(e)
+
+    if dict_valid:
+        st.success("Dictionary parsed successfully ✅")
+    else:
+        st.error(
+            "There is an error in the dictionary JSON. "
+            f"The default dictionary will be used instead.\n\nError: {error_msg}"
+        )
+
+    # ---------- 3.4 Classification options ----------
+    st.header("4. Classification options")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        return_multiple = st.checkbox(
+            "Return multiple labels (semicolon-separated)",
+            value=True,
+            help="If checked, all matching tactics are returned as a semicolon-separated string.",
+        )
+
+    with col2:
+        single_col_name = st.text_input(
+            "Name of single-label column",
+            value="Tactic_dict_single",
+        )
+
+    multi_col_name = st.text_input(
+        "Name of multi-label column",
+        value="Tactic_dict_multi",
+    )
+
+    # ---------- 3.5 Run classification ----------
+    st.header("5. Run classification")
+
+    run = st.button("Classify text")
+
+    if run:
+        if df is None:
+            st.error("Please upload a CSV file first.")
+            return
+
+        if text_col not in df.columns:
+            st.error(f"Selected text column '{text_col}' not found in dataframe.")
+            return
+
+        # Use either the user-edited dictionary (if valid) or the default
+        dictionary_to_use = user_dictionary if dict_valid else DEFAULT_TACTIC_DICTIONARY
+
+        with st.spinner("Classifying statements..."):
+            # Single label column
+            df[single_col_name] = df[text_col].apply(
+                lambda x: classify_statement(
+                    x, dictionary_to_use, return_multiple=False
+                )
+            )
+
+            # Multi-label column (if requested)
+            if return_multiple:
+                df[multi_col_name] = df[text_col].apply(
+                    lambda x: classify_statement(
+                        x, dictionary_to_use, return_multiple=True
+                    )
+                )
+
+        st.success("Classification complete! 🎉")
+
+        st.subheader("Preview of results")
+        preview_cols = [text_col, single_col_name]
+        if return_multiple:
+            preview_cols.append(multi_col_name)
+
+        st.dataframe(df[preview_cols].head(20))
+
+        # ---------- 3.6 Download results ----------
+        st.subheader("Download results")
+        csv_buffer = io.StringIO()
+        df.to_csv(csv_buffer, index=False)
+        csv_data = csv_buffer.getvalue().encode("utf-8")
+
+        st.download_button(
+            label="📥 Download CSV with labels",
+            data=csv_data,
+            file_name="sample_data_with_dict_labels_streamlit.csv",
+            mime="text/csv",
+        )
+
+        st.markdown("Dictionary used for this run:")
+        st.json(dictionary_to_use)
+
 
 if __name__ == "__main__":
     main()
