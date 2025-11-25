@@ -135,6 +135,10 @@ with st.sidebar:
         st.success("Reset to defaults!")
         st.rerun()
 
+    st.divider()
+    st.subheader("🔀 Other Pages")
+    st.page_link("pages/codex.py", label="Codex Dictionary Classifier")
+
 # Main content area
 tab1, tab2, tab3 = st.tabs(["📤 Upload & Process", "📊 Results", "📈 Statistics"])
 
