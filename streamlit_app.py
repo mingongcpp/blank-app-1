@@ -1,7 +1,7 @@
 import streamlit as st
 import streamlit.components.v1 as components
 
-GA_ID = "G-XXXXXXXX"  # 👈 换成你自己的
+GA_ID = "G-PYFJXL5BCD"  
 
 components.html(f"""
 <!-- Google Analytics -->
