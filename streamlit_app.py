@@ -1,298 +1,283 @@
 import streamlit as st
-import streamlit.components.v1 as components
+import requests
+import os
 
+# ================= CONFIG =================
 st.set_page_config(
-    page_title="Marketing Tactic Classifier",
-    page_icon="📊",
+    page_title="Prompt-Based Classification Optimizer",
     layout="wide"
 )
 
-components.html("""
-<!-- Google tag (gtag.js) -->
-<script async src="https://www.googletagmanager.com/gtag/js?id=G-PYFJXL5BCD"></script>
-<script>
-  window.dataLayer = window.dataLayer || [];
-  function gtag(){dataLayer.push(arguments);}
-  gtag('js', new Date());
-  gtag('config', 'G-PYFJXL5BCD');
-</script>
-""", height=0)
+st.title("Prompt-Based Classification Optimizer")
+st.write(
+    """
+    This app converts a **definition-only classification prompt**
+    into a **structured, rule-based classification prompt**
+    using model disagreement themes.
+    """
+)
 
+st.write("Version: 2026-02-02")
 
-# Initialize session state for dictionaries
-if 'dictionaries' not in st.session_state:
-    st.session_state.dictionaries = {
-        'urgency_marketing': {
-            'limited', 'limited time', 'limited run', 'limited edition', 'order now',
-            'last chance', 'hurry', 'while supplies last', 'before they\'re gone',
-            'selling out', 'selling fast', 'act now', 'don\'t wait', 'today only',
-            'expires soon', 'final hours', 'almost gone'
-        },
-        'exclusive_marketing': {
-            'exclusive', 'exclusively', 'exclusive offer', 'exclusive deal',
-            'members only', 'vip', 'special access', 'invitation only',
-            'premium', 'privileged', 'limited access', 'select customers',
-            'insider', 'private sale', 'early access'
-        }
+# ================= API KEY =================
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+
+if not OPENROUTER_API_KEY:
+    st.warning("Please set OPENROUTER_API_KEY in Streamlit Secrets.")
+
+# ================= INPUTS =================
+st.header("1. Definition-only Prompt")
+definition_prompt = st.text_area(
+    "Paste the definition-only prompt here:",
+    height=150
+)
+
+st.header("2. Model Disagreement Themes")
+disagreement_themes = st.text_area(
+    "Paste the disagreement themes and representative statements here:",
+    height=320
+)
+
+# ================= SYSTEM PROMPT (STRICT) =================
+SYSTEM_PROMPT = """
+You are a research assistant helping to optimize a classification prompt
+to maximize intercoder reliability.
+
+Your task is to automatically revise a definition-only classification prompt
+into a structured, rule-based classification prompt.
+
+CRITICAL OUTPUT CONSTRAINTS (MUST FOLLOW):
+- Output RAW XML only. Do NOT use markdown formatting (e.g., ```xml, ```).
+- You MUST follow the EXACT XML structure provided.
+- Do NOT add, remove, rename, or reorder XML tags.
+- ALL XML tags (<Role>, <Definition>, <Task>, etc.) MUST be followed by a line break.
+- The content of each XML tag MUST start on a new line and end on a new line.
+- Inline, single-line XML tags with content are NOT allowed.
+- Use NUMBERED inclusion and exclusion criteria (1, 2, 3, ...).
+- Each example MUST be wrapped in its own <Example_n> tag.
+- Do NOT repeat example numbers.
+- Do NOT introduce any tags that are not specified.
+- The <Output_Format> section is REQUIRED and must be included EXACTLY as specified.
+- Do NOT include explanations or commentary outside XML tags.
+
+DESIGN GOAL:
+The goal is NOT completeness, but the most straightforward decision rules
+that disambiguate edge cases and improve agreement among coders.
+
+You MUST output ONLY valid XML that strictly follows the requested structure.
+"""
+
+# ================= OPENROUTER CALL (GPT / CLAUDE) =================
+def call_openrouter(model_name, system_prompt, user_prompt):
+    url = "https://openrouter.ai/api/v1/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://streamlit.io",
+        "X-Title": "Prompt-Based Classification Optimizer"
     }
 
-def classify_statement(text, dictionaries):
-    """Classify a statement based on marketing tactic dictionaries."""
-    if pd.isna(text):
-        return {}
-    
-    text_lower = text.lower()
-    results = {}
-    
-    for tactic, keywords in dictionaries.items():
-        matches = []
-        for keyword in keywords:
-            if keyword.lower() in text_lower:
-                matches.append(keyword)
-        
-        results[tactic] = {
-            'present': len(matches) > 0,
-            'count': len(matches),
-            'matches': matches
-        }
-    
-    return results
+    payload = {
+        "model": model_name,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
+        ],
+        "temperature": 0
+    }
 
-def process_dataframe(df, dictionaries, text_column):
-    """Process the dataframe with classification."""
-    # Apply classification
-    df['classification'] = df[text_column].apply(lambda x: classify_statement(x, dictionaries))
-    
-    # Extract results to separate columns
-    for tactic in dictionaries.keys():
-        df[f'{tactic}_present'] = df['classification'].apply(lambda x: x.get(tactic, {}).get('present', False))
-        df[f'{tactic}_count'] = df['classification'].apply(lambda x: x.get(tactic, {}).get('count', 0))
-        df[f'{tactic}_matches'] = df['classification'].apply(lambda x: ', '.join(x.get(tactic, {}).get('matches', [])))
-    
-    return df
+    response = requests.post(url, headers=headers, json=payload, timeout=120)
+    response.raise_for_status()
+    return response.json()["choices"][0]["message"]["content"]
 
-# App title and description
-st.title("📊 Marketing Tactic Classifier")
-st.markdown("""
-This app classifies text statements based on marketing tactics using customizable keyword dictionaries.
-Upload your CSV file and customize the dictionaries to get started.
-""")
+# ================= OPENROUTER CALL (GEMINI SPECIAL) =================
+def call_openrouter_gemini(model_name, system_prompt, user_prompt):
+    """
+    Gemini models on OpenRouter do not reliably support the `system` role.
+    We therefore merge system + user into a single user message.
+    """
+    url = "https://openrouter.ai/api/v1/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://streamlit.io",
+        "X-Title": "Prompt-Based Classification Optimizer"
+    }
 
-# Sidebar for dictionary management
-with st.sidebar:
-    st.header("📚 Dictionary Management")
-    
-    # Add new tactic
-    with st.expander("➕ Add New Tactic", expanded=False):
-        new_tactic_name = st.text_input("Tactic Name", key="new_tactic")
-        new_keywords = st.text_area("Keywords (one per line)", key="new_keywords")
-        if st.button("Add Tactic"):
-            if new_tactic_name and new_keywords:
-                keywords_set = {kw.strip() for kw in new_keywords.split('\n') if kw.strip()}
-                st.session_state.dictionaries[new_tactic_name] = keywords_set
-                st.success(f"Added tactic: {new_tactic_name}")
-                st.rerun()
-    
-    # Edit existing tactics
-    st.subheader("Edit Existing Tactics")
-    
-    for tactic_name in list(st.session_state.dictionaries.keys()):
-        with st.expander(f"📝 {tactic_name}", expanded=False):
-            # Show current keywords
-            current_keywords = '\n'.join(sorted(st.session_state.dictionaries[tactic_name]))
-            
-            # Edit keywords
-            edited_keywords = st.text_area(
-                "Keywords (one per line)",
-                value=current_keywords,
-                key=f"edit_{tactic_name}",
-                height=200
-            )
-            
-            col1, col2 = st.columns(2)
-            with col1:
-                if st.button("💾 Save", key=f"save_{tactic_name}"):
-                    keywords_set = {kw.strip() for kw in edited_keywords.split('\n') if kw.strip()}
-                    st.session_state.dictionaries[tactic_name] = keywords_set
-                    st.success("Saved!")
-                    st.rerun()
-            
-            with col2:
-                if st.button("🗑️ Delete", key=f"delete_{tactic_name}"):
-                    del st.session_state.dictionaries[tactic_name]
-                    st.success("Deleted!")
-                    st.rerun()
-    
-    # Reset to defaults
-    st.divider()
-    if st.button("🔄 Reset to Default Dictionaries"):
-        st.session_state.dictionaries = {
-            'urgency_marketing': {
-                'limited', 'limited time', 'limited run', 'limited edition', 'order now',
-                'last chance', 'hurry', 'while supplies last', 'before they\'re gone',
-                'selling out', 'selling fast', 'act now', 'don\'t wait', 'today only',
-                'expires soon', 'final hours', 'almost gone'
-            },
-            'exclusive_marketing': {
-                'exclusive', 'exclusively', 'exclusive offer', 'exclusive deal',
-                'members only', 'vip', 'special access', 'invitation only',
-                'premium', 'privileged', 'limited access', 'select customers',
-                'insider', 'private sale', 'early access'
+    payload = {
+        "model": model_name,
+        "messages": [
+            {
+                "role": "user",
+                "content": system_prompt + "\n\n" + user_prompt
             }
-        }
-        st.success("Reset to defaults!")
-        st.rerun()
+        ],
+        "temperature": 0
+    }
 
-# Main content area
-tab1, tab2, tab3 = st.tabs(["📤 Upload & Process", "📊 Results", "📈 Statistics"])
+    response = requests.post(url, headers=headers, json=payload, timeout=120)
+    response.raise_for_status()
+    return response.json()["choices"][0]["message"]["content"]
 
-with tab1:
-    st.header("Upload Your Data")
-    
-    # File upload
-    uploaded_file = st.file_uploader("Choose a CSV file", type=['csv'])
-    
-    if uploaded_file is not None:
-        # Read the file
-        df = pd.read_csv(uploaded_file)
-        
-        st.success(f"✅ File uploaded successfully! ({len(df)} rows)")
-        
-        # Show preview
-        st.subheader("Data Preview")
-        st.dataframe(df.head(10), use_container_width=True)
-        
-        # Select text column
-        st.subheader("Select Text Column")
-        text_column = st.selectbox(
-            "Which column contains the text to classify?",
-            options=df.columns.tolist(),
-            index=0 if 'Statement' not in df.columns else df.columns.tolist().index('Statement')
-        )
-        
-        # Process button
-        if st.button("🚀 Classify Statements", type="primary"):
-            with st.spinner("Processing..."):
-                # Process the dataframe
-                processed_df = process_dataframe(df.copy(), st.session_state.dictionaries, text_column)
-                
-                # Store in session state
-                st.session_state.processed_df = processed_df
-                st.session_state.text_column = text_column
-                
-                st.success("✅ Classification complete!")
-                st.balloons()
+# ================= OPTIMIZATION =================
+st.header("3. Generate Structured Classification Prompts")
 
-with tab2:
-    st.header("Classification Results")
-    
-    if 'processed_df' in st.session_state:
-        df_result = st.session_state.processed_df
-        text_col = st.session_state.text_column
-        
-        # Display options
-        col1, col2 = st.columns([3, 1])
-        with col1:
-            filter_option = st.selectbox(
-                "Filter results",
-                ["Show All", "Show Only Matches", "Show Only Non-Matches"]
-            )
-        
-        # Filter data based on selection
-        if filter_option == "Show Only Matches":
-            present_cols = [f'{t}_present' for t in st.session_state.dictionaries.keys()]
-            df_display = df_result[df_result[present_cols].any(axis=1)]
-        elif filter_option == "Show Only Non-Matches":
-            present_cols = [f'{t}_present' for t in st.session_state.dictionaries.keys()]
-            df_display = df_result[~df_result[present_cols].any(axis=1)]
-        else:
-            df_display = df_result
-        
-        st.info(f"Showing {len(df_display)} of {len(df_result)} statements")
-        
-        # Show detailed results
-        for idx, row in df_display.iterrows():
-            with st.expander(f"Row {idx + 1}: {str(row[text_col])[:100]}..."):
-                st.markdown(f"**Full Text:** {row[text_col]}")
-                st.divider()
-                
-                # Show classification results
-                for tactic in st.session_state.dictionaries.keys():
-                    if row[f'{tactic}_present']:
-                        st.markdown(f"✅ **{tactic}**: {row[f'{tactic}_matches']}")
-                    else:
-                        st.markdown(f"❌ **{tactic}**: No matches")
-        
-        # Download results
-        st.divider()
-        st.subheader("Download Results")
-        
-        # Create download button
-        csv = df_result.to_csv(index=False)
-        st.download_button(
-            label="📥 Download Classified Data (CSV)",
-            data=csv,
-            file_name="classified_data.csv",
-            mime="text/csv",
-            type="primary"
-        )
-        
+if st.button("Generate Structured Prompts"):
+    if not definition_prompt or not disagreement_themes:
+        st.error("Please provide both the definition-only prompt and disagreement themes.")
+    elif not OPENROUTER_API_KEY:
+        st.error("Missing OpenRouter API key.")
     else:
-        st.info("👆 Please upload and process a file in the 'Upload & Process' tab first.")
+        with st.spinner("Generating structured prompts with three models..."):
 
-with tab3:
-    st.header("Statistics & Summary")
-    
-    if 'processed_df' in st.session_state:
-        df_stats = st.session_state.processed_df
-        
-        # Overall stats
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            st.metric("Total Statements", len(df_stats))
-        
-        with col2:
-            present_cols = [f'{t}_present' for t in st.session_state.dictionaries.keys()]
-            statements_with_tactics = (df_stats[present_cols].any(axis=1)).sum()
-            st.metric("Statements with Any Tactic", statements_with_tactics)
-        
-        with col3:
-            percentage = (statements_with_tactics / len(df_stats) * 100) if len(df_stats) > 0 else 0
-            st.metric("Coverage", f"{percentage:.1f}%")
-        
-        st.divider()
-        
-        # Per-tactic statistics
-        st.subheader("Tactic Breakdown")
-        
-        stats_data = []
-        for tactic in st.session_state.dictionaries.keys():
-            total_present = df_stats[f'{tactic}_present'].sum()
-            percentage = (total_present / len(df_stats) * 100) if len(df_stats) > 0 else 0
-            total_matches = df_stats[f'{tactic}_count'].sum()
-            
-            stats_data.append({
-                'Tactic': tactic,
-                'Statements': total_present,
-                'Percentage': f"{percentage:.1f}%",
-                'Total Matches': total_matches
-            })
-        
-        stats_df = pd.DataFrame(stats_data)
-        st.dataframe(stats_df, use_container_width=True, hide_index=True)
-        
-        # Visualization
-        st.subheader("Visual Distribution")
-        st.bar_chart(stats_df.set_index('Tactic')['Statements'])
-        
-    else:
-        st.info("👆 Please upload and process a file in the 'Upload & Process' tab first.")
+            user_prompt = f"""
+DEFINITION-ONLY PROMPT:
+{definition_prompt}
 
-# Footer
-st.divider()
-st.markdown("""
-<div style='text-align: center; color: gray; padding: 20px;'>
-    <small>Marketing Tactic Classifier | Built with Streamlit</small>
-</div>
-""", unsafe_allow_html=True)
+MODEL DISAGREEMENT THEMES AND EXAMPLES:
+{disagreement_themes}
+
+Please generate a FINAL, ADJUDICATIVE classification prompt using EXACTLY
+the XML structure below. This prompt will be used directly by human
+research assistants and LLMs for binary classification, so structural
+precision and readability are required.
+
+<classification_prompt>
+
+<Role>
+[Describe the classifier’s role. Emphasize that classification is based ONLY on the specific <statement>.]
+</Role>
+
+<Definition>
+[Provide a concise, adjudicative definition. Emphasize NEW vs. standard behavior and THIS STATEMENT ONLY.]
+</Definition>
+
+<Input>
+You will be provided with:
+- <context>: The surrounding text or optional contextual information related to the statement.
+- <statement>: The specific text segment to classify. ONLY this statement should be evaluated.
+</Input>
+
+
+<Task>
+[State the binary decision clearly. Emphasize that only explicit actions in the specific <statement> count.]
+</Task>
+
+<Classification>
+- tactic_prediction = 1 if the tactic is present
+- tactic_prediction = 0 if the tactic is not present
+</Classification>
+
+<Inclusion_Criteria>
+1. ...
+2. ...
+3. ...
+</Inclusion_Criteria>
+
+<Exclusion_Criteria>
+1. ...
+2. ...
+3. ...
+</Exclusion_Criteria>
+
+<Examples>
+<Example_1>
+<context>
+...
+</context>
+<statement>
+...
+</statement>
+<tactic_prediction>
+0 or 1
+</tactic_prediction>
+</Example_1>
+
+<Example_2>
+<context>
+...
+</context>
+<statement>
+...
+</statement>
+<tactic_prediction>
+0 or 1
+</tactic_prediction>
+</Example_2>
+
+<Example_3>
+<context>
+...
+</context>
+<statement>
+...
+</statement>
+<tactic_prediction>
+0 or 1
+</tactic_prediction>
+</Example_3>
+</Examples>
+
+<Output_Format>
+Return your answer as JSON only, using exactly this schema:
+{{
+  "reasoning": "inclusion_criteria [] and exclusion_criteria []; explanation: [step-by-step reasoning with keywords]",
+  "tactic_prediction": 0 or 1
+}}
+</Output_Format>
+
+</classification_prompt>
+"""
+
+            col1, col2, col3 = st.columns(3)
+
+            # ===== GPT-5.2 =====
+            with col1:
+                st.subheader("GPT-5.2 Revised Prompt")
+                try:
+                    gpt_prompt = call_openrouter(
+                        model_name="openai/gpt-5.2",
+                        system_prompt=SYSTEM_PROMPT,
+                        user_prompt=user_prompt
+                    )
+                    st.text_area(
+                        "Structured Classification Prompt (GPT-5.2):",
+                        gpt_prompt,
+                        height=600
+                    )
+                except Exception as e:
+                    st.error(f"GPT-5.2 error: {e}")
+
+            # ===== CLAUDE OPUS 4.5 =====
+            with col2:
+                st.subheader("Claude Opus 4.5 Revised Prompt")
+                try:
+                    claude_prompt = call_openrouter(
+                        model_name="anthropic/claude-opus-4.5",
+                        system_prompt=SYSTEM_PROMPT,
+                        user_prompt=user_prompt
+                    )
+                    st.text_area(
+                        "Structured Classification Prompt (Claude Opus 4.5):",
+                        claude_prompt,
+                        height=600
+                    )
+                except Exception as e:
+                    st.error(f"Claude error: {e}")
+
+            # ===== GEMINI 3 FLASH (PREVIEW) =====
+            with col3:
+                st.subheader("Gemini 3 Flash (Preview) Revised Prompt")
+                try:
+                    gemini_prompt = call_openrouter_gemini(
+                        model_name="google/gemini-3-flash-preview",
+                        system_prompt=SYSTEM_PROMPT,
+                        user_prompt=user_prompt
+                    )
+                    st.text_area(
+                        "Structured Classification Prompt (Gemini 3 Flash):",
+                        gemini_prompt,
+                        height=600
+                    )
+                except Exception as e:
+                    st.error(f"Gemini error: {e}")
